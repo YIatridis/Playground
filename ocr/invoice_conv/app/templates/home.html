@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+
+{% block title %}InvoiceScan - AI-powered Invoice Processing{% endblock %}
+
+{% block content %}
+<div class="px-4 py-5 my-5 text-center">
+    <h1 class="display-5 fw-bold text-body-emphasis">InvoiceScan</h1>
+    <div class="col-lg-6 mx-auto">
+        <p class="lead mb-4">
+            Quickly and accurately extract data from your invoice PDFs using AI technology.
+            Our service automatically identifies key information like invoice numbers, dates, vendors, and amounts.
+        </p>
+        <div class="d-grid gap-2 d-sm-flex justify-content-sm-center">
+            <a href="/register" class="btn btn-primary btn-lg px-4 gap-3">Get Started</a>
+            <a href="/pricing" class="btn btn-outline-secondary btn-lg px-4">View Pricing</a>
+        </div>
+    </div>
+</div>
+
+<div class="container px-4 py-5">
+    <h2 class="pb-2 border-bottom">Key Features</h2>
+    
+    <div class="row g-4 py-5 row-cols-1 row-cols-lg-3">
+        <div class="col d-flex align-items-start">
+            <div class="icon-square text-body-emphasis bg-light d-inline-flex align-items-center justify-content-center fs-4 flex-shrink-0 me-3">
+                <i class="fas fa-robot"></i>
+            </div>
+            <div>
+                <h3 class="fs-2 text-body-emphasis">AI-Powered Extraction</h3>
+                <p>Our advanced AI algorithms accurately extract key information from your invoices, reducing manual data entry.</p>
+            </div>
+        </div>
+        
+        <div class="col d-flex align-items-start">
+            <div class="icon-square text-body-emphasis bg-light d-inline-flex align-items-center justify-content-center fs-4 flex-shrink-0 me-3">
+                <i class="fas fa-file-export"></i>
+            </div>
+            <div>
+                <h3 class="fs-2 text-body-emphasis">Export Options</h3>
+                <p>Export your data to Excel, CSV, or JSON for seamless integration with your accounting or ERP systems.</p>
+            </div>
+        </div>
+        
+        <div class="col d-flex align-items-start">
+            <div class="icon-square text-body-emphasis bg-light d-inline-flex align-items-center justify-content-center fs-4 flex-shrink-0 me-3">
+                <i class="fas fa-clock"></i>
+            </div>
+            <div>
+                <h3 class="fs-2 text-body-emphasis">Save Time</h3>
+                <p>Reduce data entry time by up to 90% and eliminate costly errors from manual processing.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="container px-4 py-5 bg-light rounded-3">
+    <div class="row align-items-center">
+        <div class="col-lg-6">
+            <h2>How It Works</h2>
+            <ol class="fs-5">
+                <li>Upload your invoice PDF to our secure platform</li>
+                <li>Our AI analyzes the document and extracts key information</li>
+                <li>Review the extracted data in your dashboard</li>
+                <li>Export the data in your preferred format</li>
+            </ol>
+            <a href="/register" class="btn btn-primary mt-3">Try It Now</a>
+        </div>
+        <div class="col-lg-6 text-center">
+            <img src="/static/images/how-it-works.svg" alt="How InvoiceScan works" class="img-fluid" style="max-height: 400px;">
+        </div>
+    </div>
+</div>
+
+<div class="container px-4 py-5">
+    <h2 class="pb-2 border-bottom">Pricing Plans</h2>
+    
+    <div class="row row-cols-1 row-cols-md-4 mb-3 text-center py-5">
+        <div class="col">
+            <div class="card mb-4 rounded-3 shadow-sm">
+                <div class="card-header py-3">
+                    <h4 class="my-0 fw-normal">Free</h4>
+                </div>
+                <div class="card-body">
+                    <h1 class="card-title pricing-card-title">$0<small class="text-body-secondary fw-light">/mo</small></h1>
+                    <ul class="list-unstyled mt-3 mb-4">
+                        <li>5 scans per month</li>
+                        <li>Basic data extraction</li>
+                        <li>Excel export</li>
+                        <li>Email support</li>
+                    </ul>
+                    <a href="/register" class="w-100 btn btn-lg btn-outline-primary">Sign up for free</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col">
+            <div class="card mb-4 rounded-3 shadow-sm">
+                <div class="card-header py-3">
+                    <h4 class="my-0 fw-normal">Basic</h4>
+                </div>
+                <div class="card-body">
+                    <h1 class="card-title pricing-card-title">$19<small class="text-body-secondary fw-light">/mo</small></h1>
+                    <ul class="list-unstyled mt-3 mb-4">
+                        <li>50 scans per month</li>
+                        <li>Advanced data extraction</li>
+                        <li>Excel, CSV exports</li>
+                        <li>Priority email support</li>
+                    </ul>
+                    <a href="/register" class="w-100 btn btn-lg btn-primary">Get started</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col">
+            <div class="card mb-4 rounded-3 shadow-sm border-primary">
+                <div class="card-header py-3 text-bg-primary border-primary">
+                    <h4 class="my-0 fw-normal">Pro</h4>
+                </div>
+                <div class="card-body">
+                    <h1 class="card-title pricing-card-title">$49<small class="text-body-secondary fw-light">/mo</small></h1>
+                    <ul class="list-unstyled mt-3 mb-4">
+                        <li>200 scans per month</li>
+                        <li>Advanced data extraction</li>
+                        <li>All export formats</li>
+                        <li>Phone & email support</li>
+                    </ul>
+                    <a href="/register" class="w-100 btn btn-lg btn-primary">Get started</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col">
+            <div class="card mb-4 rounded-3 shadow-sm">
+                <div class="card-header py-3">
+                    <h4 class="my-0 fw-normal">Enterprise</h4>
+                </div>
+                <div class="card-body">
+                    <h1 class="card-title pricing-card-title">$99<small class="text-body-secondary fw-light">/mo</small></h1>
+                    <ul class="list-unstyled mt-3 mb-4">
+                        <li>1000 scans per month</li>
+                        <li>Advanced data extraction</li>
+                        <li>All export formats</li>
+                        <li>24/7 dedicated support</li>
+                    </ul>
+                    <a href="/register" class="w-100 btn btn-lg btn-primary">Contact us</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

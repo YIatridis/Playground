@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - InvoiceScan{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col">
+        <h1 class="h2">Dashboard</h1>
+        <p class="text-muted">Welcome to your InvoiceScan dashboard.</p>
+    </div>
+    <div class="col-auto">
+        <a href="/invoice/upload" class="btn btn-primary">
+            <i class="fas fa-upload me-2"></i> Upload Invoice
+        </a>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <!-- Usage Stats Card -->
+    <div class="col-lg-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h5 class="card-title">Usage</h5>
+                <div class="mb-4" id="subscription-info">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <strong>Subscription:</strong>
+                        <span class="badge bg-primary" id="subscription-tier">Free</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span>Scans Used:</span>
+                        <span id="scans-used">0 / 5</span>
+                    </div>
+                    <div class="progress" style="height: 8px;">
+                        <div class="progress-bar" role="progressbar" style="width: 0%" id="usage-progress"></div>
+                    </div>
+                </div>
+                <div class="text-center">
+                    <a href="/subscription" class="btn btn-sm btn-outline-primary">Upgrade Plan</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Stats Card -->
+    <div class="col-lg-8">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h5 class="card-title">Recent Activity</h5>
+                <div class="row text-center g-4">
+                    <div class="col-md-4">
+                        <div class="p-3 bg-light rounded">
+                            <h3 class="display-6 fw-bold" id="total-scans">0</h3>
+                            <p class="mb-0">Total Scans</p>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3 bg-light rounded">
+                            <h3 class="display-6 fw-bold" id="successful-scans">0</h3>
+                            <p class="mb-0">Successful</p>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3 bg-light rounded">
+                            <h3 class="display-6 fw-bold" id="pending-scans">0</h3>
+                            <p class="mb-0">Pending</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- Recent Invoices Table -->
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="card-title mb-0">Recent Invoices</h5>
+                    <a href="/invoice/list" class="btn btn-sm btn-outline-primary">View All</a>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Invoice #</th>
+                                <th>Date</th>
+                                <th>Vendor</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recent-invoices-table">
+                            <tr>
+                                <td colspan="6" class="text-center py-4">No invoices found. <a href="/invoice/upload">Upload your first invoice</a>.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Check authentication
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+            window.location.href = '/login';
+            return;
+        }
+        
+        // Load dashboard data
+        loadDashboardData();
+    });
+    
+    async function loadDashboardData() {
+        // In a real app, this would fetch data from your API
+        // For demo purposes, we'll use mock data
+        
+        // Mock subscription data
+        const subscriptionData = {
+            tier: 'Free',
+            scans_used: 2,
+            monthly_scans: 5,
+            scans_remaining: 3
+        };
+        
+        // Mock stats
+        const statsData = {
+            total_scans: 2,
+            successful_scans: 1,
+            pending_scans: 1
+        };
+        
+        // Mock recent invoices
+        const recentInvoices = [
+            {
+                id: '1',
+                invoice_number: 'INV-001',
+                invoice_date: '15/03/2025',
+                vendor: 'Acme Inc.',
+                invoice_total: 1250.00,
+                invoice_currency: 'USD',
+                status: 'completed'
+            },
+            {
+                id: '2',
+                invoice_number: 'INV-002',
+                invoice_date: '14/03/2025',
+                vendor: 'Globex Corp',
+                invoice_total: 785.50,
+                invoice_currency: 'EUR',
+                status: 'pending'
+            }
+        ];
+        
+        // Update subscription info
+        document.getElementById('subscription-tier').textContent = subscriptionData.tier;
+        document.getElementById('scans-used').textContent = `${subscriptionData.scans_used} / ${subscriptionData.monthly_scans}`;
+        
+        // Update progress bar
+        const usagePercentage = (subscriptionData.scans_used / subscriptionData.monthly_scans) * 100;
+        document.getElementById('usage-progress').style.width = `${usagePercentage}%`;
+        
+        // Update stats
+        document.getElementById('total-scans').textContent = statsData.total_scans;
+        document.getElementById('successful-scans').textContent = statsData.successful_scans;
+        document.getElementById('pending-scans').textContent = statsData.pending_scans;
+        
+        // Update recent invoices table
+        const tableBody = document.getElementById('recent-invoices-table');
+        
+        if (recentInvoices.length > 0) {
+            tableBody.innerHTML = '';
+            
+            recentInvoices.forEach(invoice => {
+                const statusBadgeClass = invoice.status === 'completed' ? 'bg-success' : 'bg-warning';
+                const statusText = invoice.status === 'completed' ? 'Completed' : 'Pending';
+                
+                tableBody.innerHTML += `
+                    <tr>
+                        <td>${invoice.invoice_number}</td>
+                        <td>${invoice.invoice_date}</td>
+                        <td>${invoice.vendor}</td>
+                        <td>${invoice.invoice_currency} ${invoice.invoice_total.toFixed(2)}</td>
+                        <td><span class="badge ${statusBadgeClass}">${statusText}</span></td>
+                        <td>
+                            <a href="/invoice/${invoice.id}" class="btn btn-sm btn-outline-secondary">View</a>
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+    }
+</script>
+{% endblock %}

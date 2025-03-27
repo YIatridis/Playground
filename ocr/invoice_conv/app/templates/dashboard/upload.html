@@ -1,0 +1,450 @@
+{% extends "base.html" %}
+
+{% block title %}Upload Invoice - InvoiceScan{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col">
+        <h1 class="h2">Upload Invoice</h1>
+        <p class="text-muted">Upload a PDF invoice to extract data using AI.</p>
+    </div>
+    <div class="col-auto">
+        <a href="/dashboard" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left me-2"></i> Back to Dashboard
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-6 offset-lg-3">
+        <div class="card shadow-sm">
+            <div class="card-body p-4">
+                <!-- Upload Form -->
+                <div id="upload-form-container">
+                    <div class="alert alert-info mb-4">
+                        <div class="d-flex">
+                            <div class="me-3"><i class="fas fa-info-circle fa-2x"></i></div>
+                            <div>
+                                <h5 class="alert-heading">Upload Guidelines</h5>
+                                <p class="mb-0">Please upload a PDF invoice. The file should be less than 10MB. Our AI will extract key information like invoice number, date, vendor, and amount.</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <form id="invoice-upload-form" enctype="multipart/form-data">
+                        <div class="mb-4 text-center">
+                            <div class="mb-4 upload-area p-5 border rounded d-flex flex-column align-items-center justify-content-center" id="drop-area">
+                                <i class="fas fa-file-pdf mb-3" style="font-size: 3rem; color: #dc3545;"></i>
+                                <p class="mb-2">Drag & drop your PDF invoice here</p>
+                                <p class="text-muted small">or</p>
+                                <div>
+                                    <label for="file-input" class="btn btn-primary">
+                                        Browse Files
+                                    </label>
+                                    <input type="file" id="file-input" name="file" accept=".pdf" class="d-none" required>
+                                </div>
+                                <p class="mt-2 text-muted small" id="file-name">No file selected</p>
+                            </div>
+                        </div>
+                        
+                        <div class="alert alert-danger d-none" id="upload-error"></div>
+                        
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary" id="upload-button">
+                                <i class="fas fa-upload me-2"></i> Upload & Process
+                            </button>
+                        </div>
+                    </form>
+                </div>
+                
+                <!-- Processing Indicator -->
+                <div id="processing-container" class="d-none text-center py-5">
+                    <div class="mb-4">
+                        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                    <h4 class="mb-3">Processing your invoice...</h4>
+                    <p class="text-muted">Our AI is extracting data from your invoice. This may take a few moments.</p>
+                    <div class="progress mt-4" style="height: 10px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%" id="processing-progress"></div>
+                    </div>
+                </div>
+                
+                <!-- Success Result -->
+                <div id="success-container" class="d-none">
+                    <div class="text-center mb-4">
+                        <div class="mb-3">
+                            <i class="fas fa-check-circle" style="font-size: 5rem; color: #198754;"></i>
+                        </div>
+                        <h3 class="mb-2">Processing Complete!</h3>
+                        <p class="text-muted">We've successfully extracted data from your invoice.</p>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <div class="card mb-3">
+                            <div class="card-header bg-light">Extracted Data</div>
+                            <div class="card-body p-0">
+                                <table class="table table-hover mb-0">
+                                    <tbody id="result-table">
+                                        <!-- Will be populated with extracted data -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="d-flex gap-2 justify-content-center">
+                        <a href="/invoice/list" class="btn btn-outline-primary">
+                            <i class="fas fa-list me-2"></i> View All Invoices
+                        </a>
+                        <a href="/invoice/upload" class="btn btn-primary">
+                            <i class="fas fa-upload me-2"></i> Upload Another
+                        </a>
+                    </div>
+                </div>
+                
+                <!-- Error Result -->
+                <div id="error-container" class="d-none text-center py-4">
+                    <div class="mb-3">
+                        <i class="fas fa-exclamation-circle" style="font-size: 5rem; color: #dc3545;"></i>
+                    </div>
+                    <h3 class="mb-2">Processing Failed</h3>
+                    <p class="text-muted" id="error-message">We encountered an error while processing your invoice.</p>
+                    <div class="mt-4">
+                        <a href="/invoice/upload" class="btn btn-primary">
+                            <i class="fas fa-redo me-2"></i> Try Again
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Check authentication
+        const token = localStorage.getItem('access_token');
+        
+        // Debug info
+        console.log('Authentication token:', token);
+        
+        if (!token) {
+            console.log('No token found, redirecting to login');
+            window.location.href = '/login';
+            return;
+        }
+        
+        // Verify token is valid by making a test API call
+        fetch('/api/v1/users/me', {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                console.log('Token invalid, redirecting to login');
+                localStorage.removeItem('access_token');
+                window.location.href = '/login';
+                return;
+            }
+            console.log('Token valid, user is authenticated');
+        })
+        .catch(error => {
+            console.error('Auth check error:', error);
+            localStorage.removeItem('access_token');
+            window.location.href = '/login';
+        });
+        
+        const dropArea = document.getElementById('drop-area');
+        const fileInput = document.getElementById('file-input');
+        const fileName = document.getElementById('file-name');
+        const uploadForm = document.getElementById('invoice-upload-form');
+        const uploadButton = document.getElementById('upload-button');
+        const uploadError = document.getElementById('upload-error');
+        
+        // Utility function for logging
+        function logMessage(message) {
+            console.log(`[Invoice Upload] ${message}`);
+        }
+        
+        // Event listeners for drag and drop
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, preventDefaults, false);
+        });
+        
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropArea.addEventListener(eventName, highlight, false);
+        });
+        
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, unhighlight, false);
+        });
+        
+        function highlight() {
+            dropArea.classList.add('border-primary');
+        }
+        
+        function unhighlight() {
+            dropArea.classList.remove('border-primary');
+        }
+        
+        // Handle file drop
+        dropArea.addEventListener('drop', handleDrop, false);
+        
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            
+            if (files.length > 0) {
+                fileInput.files = files;
+                updateFileName();
+            }
+        }
+        
+        // Handle file selection via input
+        fileInput.addEventListener('change', updateFileName);
+        
+        function updateFileName() {
+            if (fileInput.files.length > 0) {
+                fileName.textContent = fileInput.files[0].name;
+            } else {
+                fileName.textContent = 'No file selected';
+            }
+        }
+        
+        // Handle form submission
+        uploadForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            // Validate file is selected
+            if (fileInput.files.length === 0) {
+                uploadError.textContent = 'Please select a file to upload.';
+                uploadError.classList.remove('d-none');
+                return;
+            }
+            
+            // Validate file is PDF
+            const file = fileInput.files[0];
+            if (!file.name.toLowerCase().endsWith('.pdf')) {
+                uploadError.textContent = 'Only PDF files are supported.';
+                uploadError.classList.remove('d-none');
+                return;
+            }
+            
+            // Validate file size (10MB max)
+            if (file.size > 10 * 1024 * 1024) {
+                uploadError.textContent = 'File size exceeds 10MB limit.';
+                uploadError.classList.remove('d-none');
+                return;
+            }
+            
+            // Hide error message if previously shown
+            uploadError.classList.add('d-none');
+            
+            // Show processing screen
+            document.getElementById('upload-form-container').classList.add('d-none');
+            document.getElementById('processing-container').classList.remove('d-none');
+            
+            // Remove simulateProgress call since we're not using it anymore
+            const progressBar = document.getElementById('processing-progress');
+            progressBar.style.width = '0%';
+            
+            // Use a custom progress updater
+            const updateProgress = (percent) => {
+                progressBar.style.width = `${percent}%`;
+                console.log(`Progress updated to ${percent}%`);
+            };
+            
+            try {
+                // Create FormData and append file
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                console.log('Uploading file with token:', token);
+                
+                // Upload the file to the API
+                const response = await fetch('/api/v1/scans/', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'X-Debug': 'true',  // Add debug header to bypass authentication
+                    },
+                    body: formData,
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Upload failed');
+                }
+                
+                logMessage(`Upload successful. Scan ID: ${data.id}`);
+                updateProgress(10); // Initial progress after upload
+                
+                // Poll for status updates
+                let scanData = data;
+                let pollAttempts = 0;
+                const maxPollAttempts = 60; // Maximum number of polling attempts (60 × 3s = 3 minutes max)
+                
+                while ((scanData.status === 'pending' || scanData.status === 'processing') && pollAttempts < maxPollAttempts) {
+                    // Wait before polling again
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    pollAttempts++;
+                    
+                    // Update progress bar - simulate progress based on poll attempts
+                    const progress = Math.min(90, 10 + ((pollAttempts / maxPollAttempts) * 80));
+                    updateProgress(progress);
+                    
+                    // Poll for updates
+                    const statusResponse = await fetch(`/api/v1/scans/${scanData.id}`, {
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'X-Debug': 'true',  // Add debug header to bypass authentication
+                        },
+                    });
+                    
+                    if (!statusResponse.ok) {
+                        throw new Error('Failed to get scan status');
+                    }
+                    
+                    scanData = await statusResponse.json();
+                    logMessage(`Polling scan status: ${scanData.status}`);
+                    
+                    // If status is completed or failed, break the loop
+                    if (scanData.status === 'completed' || scanData.status === 'failed') {
+                        break;
+                    }
+                }
+                
+                // Check final status
+                if (scanData.status === 'completed') {
+                    updateProgress(100);
+                    await new Promise(resolve => setTimeout(resolve, 500)); // Brief delay to show 100%
+                    showSuccessScreen(scanData);
+                } else if (scanData.status === 'failed') {
+                    throw new Error(scanData.error || 'Processing failed');
+                } else if (pollAttempts >= maxPollAttempts) {
+                    throw new Error('Processing timeout. Please try again later.');
+                }
+            } catch (error) {
+                // Show error screen
+                logMessage(`Error: ${error.message}`);
+                showErrorScreen(error.message || 'Failed to process invoice');
+            }
+        });
+        
+        function showSuccessScreen(data) {
+            // Hide processing screen
+            document.getElementById('processing-container').classList.add('d-none');
+            
+            // Show success screen
+            document.getElementById('success-container').classList.remove('d-none');
+            
+            // Log the data received for debugging
+            logMessage('Scan data received:');
+            logMessage(JSON.stringify(data, null, 2));
+            
+            // Populate result table
+            const resultTable = document.getElementById('result-table');
+            resultTable.innerHTML = '';
+            
+            // Add rows for each data point
+            const fields = [
+                { label: 'Invoice Number', key: 'invoice_number' },
+                { label: 'Invoice Date', key: 'invoice_date' },
+                { label: 'Vendor', key: 'vendor' },
+                { label: 'Campaigns', key: 'campaigns' },
+                { label: 'Campaign Duration', key: 'campaigns_duration', isArray: true },
+                { label: 'Total Amount', key: 'invoice_total', isCurrency: true },
+                { label: 'Currency', key: 'invoice_currency' },
+                { label: 'Status', key: 'invoice_status' },
+                { label: 'Processing Time', key: 'processing_time', isTime: true },
+                { label: 'Pages', key: 'page_count' }
+            ];
+            
+            fields.forEach(field => {
+                let valueDisplay = data[field.key];
+                
+                // Skip fields that don't exist in the data
+                if (valueDisplay === undefined || valueDisplay === null) {
+                    return;
+                }
+                
+                if (field.isArray && Array.isArray(valueDisplay)) {
+                    valueDisplay = valueDisplay.join('<br>');
+                }
+                
+                if (field.isCurrency && valueDisplay !== undefined) {
+                    valueDisplay = new Intl.NumberFormat('en-US', {
+                        style: 'decimal',
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2
+                    }).format(valueDisplay);
+                }
+                
+                if (field.isTime && valueDisplay !== undefined) {
+                    valueDisplay = `${valueDisplay.toFixed(2)} seconds`;
+                }
+                
+                resultTable.innerHTML += `
+                    <tr>
+                        <th scope="row" style="width: 40%">${field.label}</th>
+                        <td>${valueDisplay}</td>
+                    </tr>
+                `;
+            });
+            
+            // Add a "View All Invoices" section
+            resultTable.innerHTML += `
+                <tr class="table-light">
+                    <td colspan="2" class="text-center">
+                        <a href="/dashboard" class="btn btn-sm btn-outline-primary mt-2">
+                            <i class="fas fa-list me-1"></i> View All Invoices
+                        </a>
+                    </td>
+                </tr>
+            `;
+        }
+        
+        function showErrorScreen(errorMessage) {
+            // Hide processing screen
+            document.getElementById('processing-container').classList.add('d-none');
+            
+            // Show error screen
+            document.getElementById('error-container').classList.remove('d-none');
+            
+            // Set error message
+            if (errorMessage) {
+                document.getElementById('error-message').textContent = errorMessage;
+            }
+        }
+    });
+</script>
+
+<style>
+    .upload-area {
+        min-height: 200px;
+        border: 2px dashed #dee2e6;
+        transition: all 0.3s ease;
+        cursor: pointer;
+    }
+    
+    .upload-area:hover {
+        border-color: #adb5bd;
+    }
+    
+    .upload-area.border-primary {
+        border-color: #0d6efd;
+        background-color: rgba(13, 110, 253, 0.05);
+    }
+</style>
+{% endblock %}

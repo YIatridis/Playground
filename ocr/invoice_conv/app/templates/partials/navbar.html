@@ -1,0 +1,81 @@
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+    <div class="container">
+        <a class="navbar-brand" href="/">
+            <i class="fas fa-file-invoice me-2"></i> InvoiceScan
+        </a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav me-auto">
+                <li class="nav-item">
+                    <a class="nav-link" href="/">Home</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="/pricing">Pricing</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="/about">About</a>
+                </li>
+            </ul>
+            <ul class="navbar-nav">
+                <div id="unauthenticated-nav" class="d-none">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/login">Login</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link btn btn-outline-light" href="/register">Sign Up</a>
+                    </li>
+                </div>
+                <div id="authenticated-nav" class="d-none">
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown">
+                            <i class="fas fa-user-circle me-1"></i> <span id="username">User</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="/dashboard">Dashboard</a></li>
+                            <li><a class="dropdown-item" href="/invoice/upload">Upload Invoice</a></li>
+                            <li><a class="dropdown-item" href="/invoice/list">My Invoices</a></li>
+                            <li><a class="dropdown-item" href="/subscription">Subscription</a></li>
+                            <li><a class="dropdown-item" href="/profile">Profile</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="#" id="logout-btn">Logout</a></li>
+                        </ul>
+                    </li>
+                </div>
+            </ul>
+        </div>
+    </div>
+</nav>
+
+<script>
+    // Check authentication status when page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        const token = localStorage.getItem('access_token');
+        
+        if (token) {
+            // User is authenticated
+            document.getElementById('authenticated-nav').classList.remove('d-none');
+            document.getElementById('unauthenticated-nav').classList.add('d-none');
+            
+            // Get user info (would be implemented in a real app)
+            // For demo purposes, we'll just use a placeholder
+            document.getElementById('username').textContent = 'User';
+        } else {
+            // User is not authenticated
+            document.getElementById('authenticated-nav').classList.add('d-none');
+            document.getElementById('unauthenticated-nav').classList.remove('d-none');
+        }
+        
+        // Logout function
+        document.getElementById('logout-btn').addEventListener('click', function(e) {
+            e.preventDefault();
+            
+            // Clear token from local storage
+            localStorage.removeItem('access_token');
+            
+            // Redirect to home page
+            window.location.href = '/';
+        });
+    });
+</script>
