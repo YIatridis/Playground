@@ -1,0 +1,14 @@
+---
+description: Use logging as much as needed and use logfire for logging. @docs
+globs: *.py, *.ipynb
+---
+
+# Your rule content
+
+- Use the full logfire range of logfire levels across the code. 
+- Use Logfire documentation from Docs. 
+- Use Pydantic for validation. 
+- use pydantic documentation from docs
+- Use Pydantic-AI for designing agentic solutions
+- Use pydantic-ai documentation from docs. 
+- Use openai as main AI source. 
