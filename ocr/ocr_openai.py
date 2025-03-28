@@ -18,13 +18,6 @@ from typing import Optional, List, Dict, Union, Literal
 import re
 import concurrent.futures
 from functools import partial
-import psutil
-import sys
-
-import pydantic
-
-# Force CPU usage for marker models to avoid MPS compatibility issues
-os.environ["MARKER_DEVICE"] = "cpu"
 
 load_dotenv()
 
@@ -37,37 +30,6 @@ logfire.instrument_openai(client)
 MAX_CONCURRENCY = 4
 # Thread pool for CPU-bound operations
 thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENCY)
-
-def get_memory_usage():
-    """Get current memory usage in MB."""
-    process = psutil.Process(os.getpid())
-    mem_info = process.memory_info()
-    return mem_info.rss / (1024 * 1024)  # Convert to MB
-
-def estimate_memory_requirements(num_concurrent_tasks):
-    """
-    Estimate memory requirements based on current usage and concurrency level.
-    
-    Args:
-        num_concurrent_tasks (int): Number of concurrent tasks to estimate for
-        
-    Returns:
-        tuple: (baseline_mem_mb, estimated_total_mb, available_mem_mb)
-    """
-    # Get current memory usage as baseline
-    baseline_mem_mb = get_memory_usage()
-    
-    # Estimate per-task memory (conservative estimate based on observed usage)
-    # Marker typically uses around 2-3GB per document
-    estimated_per_task_mb = 3000  # 3GB per task (conservative estimate)
-    
-    # Calculate total estimated memory
-    estimated_total_mb = baseline_mem_mb + (estimated_per_task_mb * num_concurrent_tasks)
-    
-    # Get available system memory
-    available_mem_mb = psutil.virtual_memory().available / (1024 * 1024)
-    
-    return baseline_mem_mb, estimated_total_mb, available_mem_mb
 
 def get_gl_date(invoice_date: str) -> str:
     try:
@@ -107,6 +69,7 @@ class Solutions(str, Enum):
 
 class OCRResponse(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
+
     invoice_number: str = Field(description="The number of the invoice (not reference but the actual invoice number)")
     invoice_date: str = Field(description="The date of the invoice, shoud be in format DD/MM/YYYY")
     vendor_name: str = Field(description="The vendor of the invoice. This can be a company or a person. It can NEVER be 'Edenred Greece' or 'Voucher Services' or 'Υπηρεσιες Διατακτικων' as this will cause a validation error. ")
@@ -119,11 +82,7 @@ class OCRResponse(BaseModel):
     payment_terms: PaymentTerms = Field(description="The payment terms of the invoice, should be either 'Paid', '30 Days after Invoice Date', '60 Days after Invoice Date' or '90 Days after Invoice Date'")
     invoice_total: float = Field(description="The total amount of the invoice, usually expressed in EUR or (rarely) USD. Should always be a currency format with two decimals")
     invoice_currency: str = Field(description="The currency of the invoice, should be a three letter currency code.")
-    
-    
-    
-    
-    
+
     @field_validator("vendor_name")
     @classmethod
     def validate_vendor_name(cls, v):
@@ -131,8 +90,8 @@ class OCRResponse(BaseModel):
         if v in DISALLOWED_VENDOR_NAMES:
             raise ValueError(f"Vendor name '{v}' is disallowed.")
         return v
-    
-    
+
+
 class SaxoData(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
@@ -217,15 +176,9 @@ async def convert_pdf_in_thread(pdf_file: str) -> tuple:
     loop = asyncio.get_event_loop()
     
     def _convert_pdf():
-        pre_mem = get_memory_usage()
-        # Force CPU usage for the converter
         converter = PdfConverter(artifact_dict=create_model_dict())
         rendered = converter(pdf_file)
-        result = text_from_rendered(rendered)
-        post_mem = get_memory_usage()
-        mem_diff = post_mem - pre_mem
-        logfire.debug(f"PDF conversion memory usage: +{mem_diff:.2f} MB, total: {post_mem:.2f} MB")
-        return result
+        return text_from_rendered(rendered)
     
     return await loop.run_in_executor(thread_pool, _convert_pdf)
 
@@ -246,51 +199,40 @@ async def process_pdf_file(pdf_file: str) -> Optional[SaxoData]:
     """
     
     start_time = time.time()
-    pre_mem = get_memory_usage()
     
     try:
         file_name = Path(pdf_file).name
-        logfire.info(f"Starting processing: {file_name} (Memory: {pre_mem:.2f} MB)")
+        logfire.info(f"Starting processing: {file_name}")
         
         # Run the PDF conversion in a thread pool to avoid blocking the event loop
         logfire.debug(f"Converting PDF to markdown: {file_name}")
         full_markdown, metadata, images = await convert_pdf_in_thread(pdf_file)
         logfire.debug(f"Metadata: {metadata}")
         
-        mid_mem = get_memory_usage()
-        logfire.debug(f"After PDF conversion: Memory: {mid_mem:.2f} MB (Δ: {mid_mem-pre_mem:.2f} MB)")
-        
         # Parse content with OpenAI
         logfire.debug(f"Sending to OpenAI for parsing: {file_name}")
-        while True:
-            try:
-                end_result = await client.responses.parse(
-                    model="gpt-4o-mini",
-                    instructions=system_prompt,
-                    input="This is the Invoice in markdown:\n"
-                          f"\n{full_markdown}\n.\n"
-                          "Convert this into a structured JSON response",
-                    text_format=OCRResponse,
-                    temperature=0
-                )
-                break
-            except pydantic.ValidationError as e:
-                logfire.warning(f"Validation error: {e}. Retrying model...")
+        end_result = await client.responses.parse(
+            model="gpt-4o-mini",
+            instructions=system_prompt,
+            input="This is the Invoice in markdown:\n"
+                  f"\n{full_markdown}\n.\n"
+                  "Convert this into a structured JSON response",
+            text_format=OCRResponse,
+            temperature=0
+        )
 
         # Get OCR results and convert to SaxoData
         ocr_data = end_result.output[0].content[0].parsed
         saxo_data = create_saxo_data_from_ocr(ocr_data)
         
-        post_mem = get_memory_usage()
         processing_time = time.time() - start_time
-        logfire.info(f"Successfully processed {file_name} in {processing_time:.2f}s (Memory: {post_mem:.2f} MB, Δ: {post_mem-pre_mem:.2f} MB)")
+        logfire.info(f"Successfully processed {file_name} in {processing_time:.2f}s")
         return saxo_data
         
     except Exception as e:
         processing_time = time.time() - start_time
         file_name = Path(pdf_file).name
-        post_mem = get_memory_usage()
-        logfire.error(f"Error processing {file_name} after {processing_time:.2f}s: {str(e)} (Memory: {post_mem:.2f} MB, Δ: {post_mem-pre_mem:.2f} MB)")
+        logfire.error(f"Error processing {file_name} after {processing_time:.2f}s: {str(e)}")
         return None
 
 
@@ -327,34 +269,25 @@ async def process_batch(pdf_files: List[str]) -> List[Optional[SaxoData]]:
     logfire.info(f"Starting concurrent processing of {len(tasks)} files")
     
     # Create a periodic task to report on concurrency
-    report_task = None
-    
     async def report_concurrency():
-        try:
-            while active_files:
-                logfire.info(f"Currently processing {len(active_files)} files concurrently: {', '.join(sorted(active_files))}")
-                await asyncio.sleep(5)
-        except asyncio.CancelledError:
-            # Handle cancellation gracefully
-            pass
+        while active_files:
+            logfire.info(f"Currently processing {len(active_files)} files concurrently: {', '.join(sorted(active_files))}")
+            await asyncio.sleep(5)
     
     # Start the reporting task
-    if tasks:
-        report_task = asyncio.create_task(report_concurrency())
+    report_task = asyncio.create_task(report_concurrency())
     
+    # Wait for all tasks to complete
+    results = await asyncio.gather(*tasks)
+    
+    # Cancel the reporting task
+    report_task.cancel()
     try:
-        # Wait for all tasks to complete
-        results = await asyncio.gather(*tasks)
-        return results
-    finally:
-        # Cancel the reporting task if it was created
-        if report_task:
-            report_task.cancel()
-            # Give it a moment to clean up
-            try:
-                await asyncio.wait_for(asyncio.shield(report_task), timeout=0.5)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                pass
+        await report_task
+    except asyncio.CancelledError:
+        pass
+    
+    return results
 
 
 async def process_folder(folder_path: str, output_excel_file: str) -> None:
@@ -377,7 +310,6 @@ async def process_folder(folder_path: str, output_excel_file: str) -> None:
         None
     """
     start_time = time.time()
-    start_mem = get_memory_usage()
     
     # Load all PDF files from the folder
     logfire.info(f"Starting PDF processing from folder: {folder_path}")
@@ -387,34 +319,17 @@ async def process_folder(folder_path: str, output_excel_file: str) -> None:
         logfire.warning(f"No PDF files found in {folder_path}")
         return
     
-    # Estimate memory requirements
-    baseline_mem, est_total_mem, avail_mem = estimate_memory_requirements(MAX_CONCURRENCY)
-    logfire.info(f"Memory estimates: Baseline: {baseline_mem:.2f} MB, Total needed: {est_total_mem:.2f} MB, Available: {avail_mem:.2f} MB")
-    
-    if est_total_mem > avail_mem * 0.8:  # Only use 80% of available memory
-        # Recalculate concurrency to fit within memory constraints
-        safe_concurrency = max(1, int((avail_mem * 0.8 - baseline_mem) / 3000))
-        logfire.warning(f"Reducing concurrency from {MAX_CONCURRENCY} to {safe_concurrency} to avoid memory issues")
-        concurrency = safe_concurrency
-    else:
-        concurrency = MAX_CONCURRENCY
-    
-    # Process files in batches
+    # Process files in batches of MAX_CONCURRENCY
     results = []
-    total_batches = (len(pdf_files) + concurrency - 1) // concurrency  # Ceiling division
+    total_batches = (len(pdf_files) + MAX_CONCURRENCY - 1) // MAX_CONCURRENCY  # Ceiling division
     
-    for i in range(0, len(pdf_files), concurrency):
-        batch = pdf_files[i:i + concurrency]
-        batch_num = i // concurrency + 1
-        current_mem = get_memory_usage()
-        logfire.info(f"Processing batch {batch_num}/{total_batches}: {len(batch)} files (Memory: {current_mem:.2f} MB)")
+    for i in range(0, len(pdf_files), MAX_CONCURRENCY):
+        batch = pdf_files[i:i + MAX_CONCURRENCY]
+        batch_num = i // MAX_CONCURRENCY + 1
+        logfire.info(f"Processing batch {batch_num}/{total_batches}: {len(batch)} files")
         batch_results = await process_batch(batch)
         results.extend(batch_results)
-        # Force garbage collection between batches
-        import gc
-        gc.collect()
-        post_batch_mem = get_memory_usage()
-        logfire.info(f"Completed batch {batch_num}/{total_batches} (Memory: {post_batch_mem:.2f} MB, Δ: {post_batch_mem-current_mem:.2f} MB)")
+        logfire.info(f"Completed batch {batch_num}/{total_batches}")
     
     # Filter out any None results (failed processing)
     saxo_data_list = [result for result in results if result is not None]
@@ -434,18 +349,17 @@ async def process_folder(folder_path: str, output_excel_file: str) -> None:
     # Write the DataFrame to an Excel file
     df.to_excel(output_excel_file, index=False)
 
-    end_mem = get_memory_usage()
     total_time = time.time() - start_time
     logfire.info(f"Data has been written to {output_excel_file}")
-    logfire.info(f"Total processing time: {total_time:.2f} seconds (Memory: Start {start_mem:.2f} MB → End {end_mem:.2f} MB)")
-    
+    logfire.info(f"Total processing time: {total_time:.2f} seconds")
+    print(f"✅ Processing complete! Data has been written to {output_excel_file}")
+
+
 def parse_arguments():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Process PDF files with OCR and export results to Excel.")
     parser.add_argument("--folder", required=True, help="Folder containing PDF files to process")
     parser.add_argument("--output", default="parsed_data.xlsx", help="Output Excel file (default: parsed_data.xlsx)")
-    parser.add_argument("--concurrency", type=int, default=MAX_CONCURRENCY, help=f"Maximum number of concurrent tasks (default: {MAX_CONCURRENCY})")
-    parser.add_argument("--memory-check", action="store_true", help="Perform memory check before starting and adjust concurrency accordingly")
     return parser.parse_args()
 
 
@@ -453,44 +367,12 @@ if __name__ == "__main__":
     # Parse command-line arguments
     args = parse_arguments()
     
-    # Update concurrency if specified
-    if args.concurrency != MAX_CONCURRENCY:
-        # Use globals() instead of global keyword
-        globals()['MAX_CONCURRENCY'] = args.concurrency
-        # Recreate thread pool with new concurrency
-        thread_pool.shutdown(wait=False)
-        globals()['thread_pool'] = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENCY)
-    
-    # If memory check is requested, estimate requirements
-    if args.memory_check:
-        baseline, estimated, available = estimate_memory_requirements(MAX_CONCURRENCY)
-        print(f"Memory Check Results:")
-        print(f"  Baseline memory usage: {baseline:.2f} MB")
-        print(f"  Estimated total needed: {estimated:.2f} MB (~{estimated/1024:.2f} GB)")
-        print(f"  System memory available: {available:.2f} MB (~{available/1024:.2f} GB)")
-        
-        if estimated > available * 0.8:
-            safe_concurrency = max(1, int((available * 0.8 - baseline) / 3000))
-            print(f"WARNING: Not enough memory for {MAX_CONCURRENCY} concurrent tasks.")
-            print(f"Recommended concurrency: {safe_concurrency}")
-            proceed = input("Do you want to proceed with adjusted concurrency? (y/n): ")
-            if proceed.lower() == 'y':
-                globals()['MAX_CONCURRENCY'] = safe_concurrency
-                thread_pool.shutdown(wait=False)
-                globals()['thread_pool'] = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENCY)
-                print(f"Concurrency adjusted to {MAX_CONCURRENCY}")
-            else:
-                print("Exiting.")
-                sys.exit(0)
-    
     try:
-        # Set up a more refined process for asyncio cleanup
-        asyncio.run(process_folder(args.folder, args.output), debug=True)
+        # Run the asyncio event loop
+        asyncio.run(process_folder(args.folder, args.output))
     finally:
         # Ensure the thread pool is properly shutdown
         thread_pool.shutdown(wait=True)
-        # Force garbage collection to clean up resources
-        import gc
-        gc.collect()
+
 
 
