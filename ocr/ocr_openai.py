@@ -23,6 +23,9 @@ import sys
 
 import pydantic
 
+# Force CPU usage for marker models to avoid MPS compatibility issues
+os.environ["MARKER_DEVICE"] = "cpu"
+
 load_dotenv()
 
 # Initialize logfire
@@ -215,7 +218,8 @@ async def convert_pdf_in_thread(pdf_file: str) -> tuple:
     
     def _convert_pdf():
         pre_mem = get_memory_usage()
-        converter = PdfConverter(artifact_dict=create_model_dict())
+        # Force CPU usage for the converter
+        converter = PdfConverter(artifact_dict=create_model_dict(), device="cpu")
         rendered = converter(pdf_file)
         result = text_from_rendered(rendered)
         post_mem = get_memory_usage()
