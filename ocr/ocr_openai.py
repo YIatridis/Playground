@@ -27,7 +27,7 @@ logfire.configure()
 logfire.instrument_openai(client)
 
 # Fixed concurrency limit
-MAX_CONCURRENCY = 5
+MAX_CONCURRENCY = 4
 # Thread pool for CPU-bound operations
 thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENCY)
 
