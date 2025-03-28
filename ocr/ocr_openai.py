@@ -8,7 +8,7 @@ import glob
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 import pandas as pd
 import asyncio
 import logfire 
@@ -20,6 +20,8 @@ import concurrent.futures
 from functools import partial
 import psutil
 import sys
+
+import pydantic
 
 load_dotenv()
 
@@ -102,7 +104,6 @@ class Solutions(str, Enum):
 
 class OCRResponse(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
-
     invoice_number: str = Field(description="The number of the invoice (not reference but the actual invoice number)")
     invoice_date: str = Field(description="The date of the invoice, shoud be in format DD/MM/YYYY")
     vendor_name: str = Field(description="The vendor of the invoice. This can be a company or a person. It can NEVER be 'Edenred Greece' or 'Voucher Services' or 'Υπηρεσιες Διατακτικων' as this will cause a validation error. ")
@@ -115,7 +116,20 @@ class OCRResponse(BaseModel):
     payment_terms: PaymentTerms = Field(description="The payment terms of the invoice, should be either 'Paid', '30 Days after Invoice Date', '60 Days after Invoice Date' or '90 Days after Invoice Date'")
     invoice_total: float = Field(description="The total amount of the invoice, usually expressed in EUR or (rarely) USD. Should always be a currency format with two decimals")
     invoice_currency: str = Field(description="The currency of the invoice, should be a three letter currency code.")
-
+    
+    
+    
+    
+    
+    @field_validator("vendor_name")
+    @classmethod
+    def validate_vendor_name(cls, v):
+        DISALLOWED_VENDOR_NAMES = {"Edenred Greece", "Voucher Services", "Υπηρεσιες Διατακτικων"}
+        if v in DISALLOWED_VENDOR_NAMES:
+            raise ValueError(f"Vendor name '{v}' is disallowed.")
+        return v
+    
+    
 class SaxoData(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
@@ -244,15 +258,20 @@ async def process_pdf_file(pdf_file: str) -> Optional[SaxoData]:
         
         # Parse content with OpenAI
         logfire.debug(f"Sending to OpenAI for parsing: {file_name}")
-        end_result = await client.responses.parse(
-            model="gpt-4o-mini",
-            instructions=system_prompt,
-            input="This is the Invoice in markdown:\n"
-                  f"\n{full_markdown}\n.\n"
-                  "Convert this into a structured JSON response",
-            text_format=OCRResponse,
-            temperature=0
-        )
+        while True:
+            try:
+                end_result = await client.responses.parse(
+                    model="gpt-4o-mini",
+                    instructions=system_prompt,
+                    input="This is the Invoice in markdown:\n"
+                          f"\n{full_markdown}\n.\n"
+                          "Convert this into a structured JSON response",
+                    text_format=OCRResponse,
+                    temperature=0
+                )
+                break
+            except pydantic.ValidationError as e:
+                logfire.warning(f"Validation error: {e}. Retrying model...")
 
         # Get OCR results and convert to SaxoData
         ocr_data = end_result.output[0].content[0].parsed
