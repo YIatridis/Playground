@@ -159,7 +159,7 @@ def create_saxo_data_from_ocr(ocr_data: OCRResponse) -> SaxoData:
     )
 
 system_prompt = """You are a helpful assistant that parses OCR data from images into a structured JSON response.
-Vendor can never be Edenred or Voucher Services or Υπηρεσιες Διατακτικων.
+vendor_name can never be Edenred or Voucher Services or Υπηρεσιες Διατακτικων. Be extra careful with this.
 Date should always be in the format DD/MM/YYYY.
 """
 
@@ -211,20 +211,16 @@ async def process_pdf_file(pdf_file: str) -> Optional[SaxoData]:
         
         # Parse content with OpenAI
         logfire.debug(f"Sending to OpenAI for parsing: {file_name}")
-        while True:
-            try:
-                end_result = await client.responses.parse(
-                    model="gpt-4o-mini",
-                    instructions=system_prompt,
-                    input="This is the Invoice in markdown:\n"
-                          f"\n{full_markdown}\n.\n"
-                          "Convert this into a structured JSON response",
-                    text_format=OCRResponse,
-                    temperature=0
-                )
-                break  # Exit the loop if parsing is successful
-            except ValidationError as e:
-                logfire.warning(f"Pydantic validation error: {e}. Retrying...")
+        
+        end_result = await client.responses.parse(
+            model="gpt-4o-mini",
+            instructions=system_prompt,
+            input="This is the Invoice in markdown:\n"
+                    f"\n{full_markdown}\n.\n"
+                    "Convert this into a structured JSON response",
+            text_format=OCRResponse,
+            temperature=0
+        )
 
         # Get OCR results and convert to SaxoData
         ocr_data = end_result.output[0].content[0].parsed
