@@ -72,7 +72,7 @@ class OCRResponse(BaseModel):
 
     invoice_number: str = Field(description="The number of the invoice (not reference but the actual invoice number)")
     invoice_date: str = Field(description="The date of the invoice, shoud be in format DD/MM/YYYY")
-    vendor_name: str = Field(description="The vendor of the invoice. This can be a company or a person. It can never, at any time, be Edenred Greece or Voucher Services or Υπηρεσιες Διατακτικων")
+    vendor_name: str = Field(description="The vendor of the invoice. This can be a company or a person. It can NEVER be 'Edenred Greece' or 'Voucher Services' or 'Υπηρεσιες Διατακτικων' as this will cause a validation error. ")
     vendor_VAT: str = Field(description="The VAT of the vendor")
     description: str = Field(description="A one line description of the invoice based on the expenses it describes")
     solutions: list[Solutions] = Field(description="The different solutions for which the invoice was alloccated to")
