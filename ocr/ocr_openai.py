@@ -8,7 +8,7 @@ import glob
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, ValidationError
 import pandas as pd
 import asyncio
 import logfire 
@@ -211,15 +211,20 @@ async def process_pdf_file(pdf_file: str) -> Optional[SaxoData]:
         
         # Parse content with OpenAI
         logfire.debug(f"Sending to OpenAI for parsing: {file_name}")
-        end_result = await client.responses.parse(
-            model="gpt-4o-mini",
-            instructions=system_prompt,
-            input="This is the Invoice in markdown:\n"
-                  f"\n{full_markdown}\n.\n"
-                  "Convert this into a structured JSON response",
-            text_format=OCRResponse,
-            temperature=0
-        )
+        while True:
+            try:
+                end_result = await client.responses.parse(
+                    model="gpt-4o-mini",
+                    instructions=system_prompt,
+                    input="This is the Invoice in markdown:\n"
+                          f"\n{full_markdown}\n.\n"
+                          "Convert this into a structured JSON response",
+                    text_format=OCRResponse,
+                    temperature=0
+                )
+                break  # Exit the loop if parsing is successful
+            except ValidationError as e:
+                logfire.warning(f"Pydantic validation error: {e}. Retrying...")
 
         # Get OCR results and convert to SaxoData
         ocr_data = end_result.output[0].content[0].parsed
