@@ -32,8 +32,12 @@ logfire.instrument_openai(client)
 
 # Fixed concurrency limit
 MAX_CONCURRENCY = 4
+# GPU concurrency limit (much lower to avoid MPS errors on macOS)
+GPU_CONCURRENCY = 4
 # Thread pool for CPU-bound operations
 thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENCY)
+# Semaphore to limit GPU operations
+gpu_semaphore = asyncio.Semaphore(GPU_CONCURRENCY)
 
 def get_memory_usage():
     """Get current memory usage in MB."""
@@ -41,15 +45,16 @@ def get_memory_usage():
     mem_info = process.memory_info()
     return mem_info.rss / (1024 * 1024)  # Convert to MB
 
-def estimate_memory_requirements(num_concurrent_tasks):
+def estimate_memory_requirements(num_concurrent_tasks, num_gpu_tasks):
     """
     Estimate memory requirements based on current usage and concurrency level.
     
     Args:
         num_concurrent_tasks (int): Number of concurrent tasks to estimate for
+        num_gpu_tasks (int): Number of concurrent GPU tasks
         
     Returns:
-        tuple: (baseline_mem_mb, estimated_total_mb, available_mem_mb)
+        tuple: (baseline_mem_mb, estimated_total_mb, available_mem_mb, gpu_memory_status)
     """
     # Get current memory usage as baseline
     baseline_mem_mb = get_memory_usage()
@@ -64,7 +69,20 @@ def estimate_memory_requirements(num_concurrent_tasks):
     # Get available system memory
     available_mem_mb = psutil.virtual_memory().available / (1024 * 1024)
     
-    return baseline_mem_mb, estimated_total_mb, available_mem_mb
+    # Check GPU memory if on macOS (using MPS)
+    gpu_memory_status = "Unknown"
+    if sys.platform == 'darwin':
+        # On macOS with Apple Silicon, GPU shares memory with system
+        # Estimate conservative GPU memory usage per task
+        gpu_per_task_mb = 2000  # 2GB per GPU task (conservative)
+        total_gpu_estimate_mb = gpu_per_task_mb * num_gpu_tasks
+        
+        if total_gpu_estimate_mb > 8000:  # 8GB is conservative for shared GPU memory
+            gpu_memory_status = f"Warning: GPU memory usage may be excessive ({total_gpu_estimate_mb/1024:.1f} GB)"
+        else:
+            gpu_memory_status = f"OK: Estimated GPU memory usage: {total_gpu_estimate_mb/1024:.1f} GB"
+    
+    return baseline_mem_mb, estimated_total_mb, available_mem_mb, gpu_memory_status
 
 def get_gl_date(invoice_date: str) -> str:
     try:
@@ -204,6 +222,7 @@ Date should always be in the format DD/MM/YYYY.
 async def convert_pdf_in_thread(pdf_file: str) -> tuple:
     """
     Run the PdfConverter in a thread pool to avoid blocking the event loop.
+    Use a GPU semaphore to prevent too many concurrent GPU operations.
     
     Args:
         pdf_file (str): Path to the PDF file
@@ -211,19 +230,44 @@ async def convert_pdf_in_thread(pdf_file: str) -> tuple:
     Returns:
         tuple: (full_markdown, metadata, images)
     """
-    loop = asyncio.get_event_loop()
-    
-    def _convert_pdf():
-        pre_mem = get_memory_usage()
-        converter = PdfConverter(artifact_dict=create_model_dict())
-        rendered = converter(pdf_file)
-        result = text_from_rendered(rendered)
-        post_mem = get_memory_usage()
-        mem_diff = post_mem - pre_mem
-        logfire.debug(f"PDF conversion memory usage: +{mem_diff:.2f} MB, total: {post_mem:.2f} MB")
-        return result
-    
-    return await loop.run_in_executor(thread_pool, _convert_pdf)
+    # Acquire GPU semaphore to limit concurrent GPU operations
+    async with gpu_semaphore:
+        loop = asyncio.get_event_loop()
+        
+        def _convert_pdf():
+            pre_mem = get_memory_usage()
+            try:
+                converter = PdfConverter(artifact_dict=create_model_dict())
+                rendered = converter(pdf_file)
+                result = text_from_rendered(rendered)
+                post_mem = get_memory_usage()
+                mem_diff = post_mem - pre_mem
+                logfire.debug(f"PDF conversion memory usage: +{mem_diff:.2f} MB, total: {post_mem:.2f} MB")
+                return result
+            except RuntimeError as e:
+                error_msg = str(e)
+                if "mps" in error_msg.lower() or "metal" in error_msg.lower():
+                    logfire.error(f"MPS/Metal GPU error during PDF conversion: {error_msg}")
+                    if GPU_CONCURRENCY > 1:
+                        logfire.error(f"Try reducing GPU concurrency with --gpu-concurrency=1")
+                raise  # Re-raise the exception
+        
+        # If on macOS, add extra error handling for MPS errors
+        if sys.platform == 'darwin':
+            try:
+                return await loop.run_in_executor(thread_pool, _convert_pdf)
+            except RuntimeError as e:
+                error_msg = str(e)
+                if "mps" in error_msg.lower() or "metal" in error_msg.lower():
+                    # If we get an MPS error, try one more time with a pause
+                    logfire.warning(f"MPS/Metal error detected: {error_msg}")
+                    logfire.warning(f"Waiting 5 seconds before retrying...")
+                    await asyncio.sleep(5)
+                    # Try once more
+                    return await loop.run_in_executor(thread_pool, _convert_pdf)
+                raise  # Re-raise other errors
+        else:
+            return await loop.run_in_executor(thread_pool, _convert_pdf)
 
 async def process_pdf_file(pdf_file: str) -> Optional[SaxoData]:
     """
@@ -384,16 +428,28 @@ async def process_folder(folder_path: str, output_excel_file: str) -> None:
         return
     
     # Estimate memory requirements
-    baseline_mem, est_total_mem, avail_mem = estimate_memory_requirements(MAX_CONCURRENCY)
-    logfire.info(f"Memory estimates: Baseline: {baseline_mem:.2f} MB, Total needed: {est_total_mem:.2f} MB, Available: {avail_mem:.2f} MB")
+    baseline_mem, est_total_mem, avail_mem, gpu_status = estimate_memory_requirements(MAX_CONCURRENCY, GPU_CONCURRENCY)
+    logfire.info(f"Memory estimates: Baseline: {baseline_mem:.2f} MB, Total needed: {est_total_mem:.2f} MB, Available: {avail_mem:.2f} MB, GPU status: {gpu_status}")
     
+    # Determine appropriate concurrency values
+    concurrency = MAX_CONCURRENCY
+    gpu_concurrency = GPU_CONCURRENCY
+    
+    # If on macOS, be more cautious with GPU concurrency
+    if sys.platform == 'darwin' and len(pdf_files) > 5 and GPU_CONCURRENCY > 1:
+        if "excessive" in gpu_status:
+            new_gpu_concurrency = 1
+            logfire.warning(f"On macOS with many files, reducing GPU concurrency from {GPU_CONCURRENCY} to {new_gpu_concurrency} to prevent MPS errors")
+            globals()['GPU_CONCURRENCY'] = new_gpu_concurrency
+            globals()['gpu_semaphore'] = asyncio.Semaphore(new_gpu_concurrency)
+            gpu_concurrency = new_gpu_concurrency
+    
+    # Check if enough system memory is available
     if est_total_mem > avail_mem * 0.8:  # Only use 80% of available memory
         # Recalculate concurrency to fit within memory constraints
         safe_concurrency = max(1, int((avail_mem * 0.8 - baseline_mem) / 3000))
         logfire.warning(f"Reducing concurrency from {MAX_CONCURRENCY} to {safe_concurrency} to avoid memory issues")
         concurrency = safe_concurrency
-    else:
-        concurrency = MAX_CONCURRENCY
     
     # Process files in batches
     results = []
@@ -441,6 +497,7 @@ def parse_arguments():
     parser.add_argument("--folder", required=True, help="Folder containing PDF files to process")
     parser.add_argument("--output", default="parsed_data.xlsx", help="Output Excel file (default: parsed_data.xlsx)")
     parser.add_argument("--concurrency", type=int, default=MAX_CONCURRENCY, help=f"Maximum number of concurrent tasks (default: {MAX_CONCURRENCY})")
+    parser.add_argument("--gpu-concurrency", type=int, default=GPU_CONCURRENCY, help=f"Maximum number of concurrent GPU operations (default: {GPU_CONCURRENCY})")
     parser.add_argument("--memory-check", action="store_true", help="Perform memory check before starting and adjust concurrency accordingly")
     return parser.parse_args()
 
@@ -449,21 +506,41 @@ if __name__ == "__main__":
     # Parse command-line arguments
     args = parse_arguments()
     
+    # Print informative message about concurrency
+    print(f"\n{'='*80}")
+    print(f"OCR PDF Processing with Concurrency Control")
+    print(f"{'='*80}")
+    print(f"Processing folder: {args.folder}")
+    print(f"Output file: {args.output}")
+    print(f"CPU Concurrency: {MAX_CONCURRENCY} (controls how many PDFs are processed in parallel)")
+    print(f"GPU Concurrency: {GPU_CONCURRENCY} (controls how many PDF->Markdown conversions run in parallel)")
+    
+    if sys.platform == 'darwin':
+        print("\nIMPORTANT NOTE FOR macOS USERS:")
+        print("The marker library uses Metal Performance Shaders (MPS) which can crash if overloaded.")
+        print("If you encounter MPS errors, reduce GPU concurrency to 1 with --gpu-concurrency=1")
+    print(f"{'='*80}\n")
+    
     # Update concurrency if specified
     if args.concurrency != MAX_CONCURRENCY:
-        # Use globals() instead of global keyword
         globals()['MAX_CONCURRENCY'] = args.concurrency
         # Recreate thread pool with new concurrency
         thread_pool.shutdown(wait=False)
         globals()['thread_pool'] = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENCY)
     
+    # Update GPU concurrency if specified
+    if args.gpu_concurrency != GPU_CONCURRENCY:
+        globals()['GPU_CONCURRENCY'] = args.gpu_concurrency
+        globals()['gpu_semaphore'] = asyncio.Semaphore(GPU_CONCURRENCY)
+    
     # If memory check is requested, estimate requirements
     if args.memory_check:
-        baseline, estimated, available = estimate_memory_requirements(MAX_CONCURRENCY)
+        baseline, estimated, available, gpu_status = estimate_memory_requirements(MAX_CONCURRENCY, GPU_CONCURRENCY)
         print(f"Memory Check Results:")
         print(f"  Baseline memory usage: {baseline:.2f} MB")
         print(f"  Estimated total needed: {estimated:.2f} MB (~{estimated/1024:.2f} GB)")
         print(f"  System memory available: {available:.2f} MB (~{available/1024:.2f} GB)")
+        print(f"  GPU status: {gpu_status}")
         
         if estimated > available * 0.8:
             safe_concurrency = max(1, int((available * 0.8 - baseline) / 3000))
