@@ -33,11 +33,14 @@ logfire.instrument_openai(client)
 # Fixed concurrency limit
 MAX_CONCURRENCY = 4
 # GPU concurrency limit (much lower to avoid MPS errors on macOS)
-GPU_CONCURRENCY = 4
+GPU_CONCURRENCY = 2  # Reducing from 4 to 2 to avoid MPS errors
 # Thread pool for CPU-bound operations
 thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENCY)
 # Semaphore to limit GPU operations
 gpu_semaphore = asyncio.Semaphore(GPU_CONCURRENCY)
+
+# Add CPU fallback flag
+USE_CPU_FALLBACK = False
 
 def get_memory_usage():
     """Get current memory usage in MB."""
@@ -236,8 +239,17 @@ async def convert_pdf_in_thread(pdf_file: str) -> tuple:
         
         def _convert_pdf():
             pre_mem = get_memory_usage()
+            global USE_CPU_FALLBACK
+            
             try:
-                converter = PdfConverter(artifact_dict=create_model_dict())
+                # Create a model dict with the appropriate device
+                if USE_CPU_FALLBACK:
+                    logfire.info(f"Using CPU fallback for PDF conversion: {Path(pdf_file).name}")
+                    artifact_dict = create_model_dict(device="cpu")
+                else:
+                    artifact_dict = create_model_dict()  # Default device (MPS on macOS)
+                
+                converter = PdfConverter(artifact_dict=artifact_dict)
                 rendered = converter(pdf_file)
                 result = text_from_rendered(rendered)
                 post_mem = get_memory_usage()
@@ -246,11 +258,31 @@ async def convert_pdf_in_thread(pdf_file: str) -> tuple:
                 return result
             except RuntimeError as e:
                 error_msg = str(e)
-                if "mps" in error_msg.lower() or "metal" in error_msg.lower():
+                post_mem = get_memory_usage()
+                mem_diff = post_mem - pre_mem
+                
+                # Handle MPS-specific errors
+                if "mps" in error_msg.lower() or "metal" in error_msg.lower() or "tensor" in error_msg.lower():
                     logfire.error(f"MPS/Metal GPU error during PDF conversion: {error_msg}")
-                    if GPU_CONCURRENCY > 1:
-                        logfire.error(f"Try reducing GPU concurrency with --gpu-concurrency=1")
-                raise  # Re-raise the exception
+                    logfire.error(f"Memory usage at error: +{mem_diff:.2f} MB, total: {post_mem:.2f} MB")
+                    
+                    # Enable CPU fallback for future conversions
+                    if not USE_CPU_FALLBACK:
+                        USE_CPU_FALLBACK = True
+                        logfire.warning("Enabling CPU fallback for all future conversions")
+                        
+                        # Try again immediately with CPU
+                        logfire.info(f"Retrying with CPU for {Path(pdf_file).name}")
+                        artifact_dict = create_model_dict(device="cpu")
+                        converter = PdfConverter(artifact_dict=artifact_dict)
+                        rendered = converter(pdf_file)
+                        result = text_from_rendered(rendered)
+                        post_mem = get_memory_usage()
+                        mem_diff = post_mem - pre_mem
+                        logfire.debug(f"CPU fallback conversion memory usage: +{mem_diff:.2f} MB, total: {post_mem:.2f} MB")
+                        return result
+                        
+                raise  # Re-raise the exception if CPU fallback fails or for other errors
         
         # If on macOS, add extra error handling for MPS errors
         if sys.platform == 'darwin':
@@ -258,11 +290,17 @@ async def convert_pdf_in_thread(pdf_file: str) -> tuple:
                 return await loop.run_in_executor(thread_pool, _convert_pdf)
             except RuntimeError as e:
                 error_msg = str(e)
-                if "mps" in error_msg.lower() or "metal" in error_msg.lower():
+                if "mps" in error_msg.lower() or "metal" in error_msg.lower() or "tensor" in error_msg.lower():
                     # If we get an MPS error, try one more time with a pause
                     logfire.warning(f"MPS/Metal error detected: {error_msg}")
                     logfire.warning(f"Waiting 5 seconds before retrying...")
                     await asyncio.sleep(5)
+                    
+                    # Force CPU fallback if not already enabled
+                    if not USE_CPU_FALLBACK:
+                        USE_CPU_FALLBACK = True
+                        logfire.warning("Enabling CPU fallback for all future conversions")
+                    
                     # Try once more
                     return await loop.run_in_executor(thread_pool, _convert_pdf)
                 raise  # Re-raise other errors
@@ -499,12 +537,18 @@ def parse_arguments():
     parser.add_argument("--concurrency", type=int, default=MAX_CONCURRENCY, help=f"Maximum number of concurrent tasks (default: {MAX_CONCURRENCY})")
     parser.add_argument("--gpu-concurrency", type=int, default=GPU_CONCURRENCY, help=f"Maximum number of concurrent GPU operations (default: {GPU_CONCURRENCY})")
     parser.add_argument("--memory-check", action="store_true", help="Perform memory check before starting and adjust concurrency accordingly")
+    parser.add_argument("--cpu", action="store_true", help="Force CPU usage instead of GPU for all conversions")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     # Parse command-line arguments
     args = parse_arguments()
+    
+    # Enable CPU fallback if requested
+    if args.cpu:
+        USE_CPU_FALLBACK = True
+        logfire.info("CPU fallback enabled by command line flag")
     
     # Print informative message about concurrency
     print(f"\n{'='*80}")
@@ -514,11 +558,13 @@ if __name__ == "__main__":
     print(f"Output file: {args.output}")
     print(f"CPU Concurrency: {MAX_CONCURRENCY} (controls how many PDFs are processed in parallel)")
     print(f"GPU Concurrency: {GPU_CONCURRENCY} (controls how many PDF->Markdown conversions run in parallel)")
+    print(f"Using CPU fallback: {USE_CPU_FALLBACK}")
     
     if sys.platform == 'darwin':
         print("\nIMPORTANT NOTE FOR macOS USERS:")
         print("The marker library uses Metal Performance Shaders (MPS) which can crash if overloaded.")
-        print("If you encounter MPS errors, reduce GPU concurrency to 1 with --gpu-concurrency=1")
+        print("If you encounter MPS errors, the script will automatically fall back to CPU.")
+        print("To force CPU usage from the start, use the --cpu flag.")
     print(f"{'='*80}\n")
     
     # Update concurrency if specified
