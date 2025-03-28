@@ -219,7 +219,7 @@ async def convert_pdf_in_thread(pdf_file: str) -> tuple:
     def _convert_pdf():
         pre_mem = get_memory_usage()
         # Force CPU usage for the converter
-        converter = PdfConverter(artifact_dict=create_model_dict(), device="cpu")
+        converter = PdfConverter(artifact_dict=create_model_dict())
         rendered = converter(pdf_file)
         result = text_from_rendered(rendered)
         post_mem = get_memory_usage()

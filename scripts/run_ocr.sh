@@ -11,4 +11,4 @@ OUTPUT=${2:-"parsed_data.xlsx"}
 echo "Running OCR on folder: $FOLDER, output: $OUTPUT"
 
 # Run the OCR program
-python ocr/ocr_openai.py --folder $FOLDER --output $OUTPUT --memory-check 
+python ocr_openai.py --folder $FOLDER --output $OUTPUT --memory-check 
