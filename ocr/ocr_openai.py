@@ -216,22 +216,41 @@ async def process_pdf_file(pdf_file: str) -> Optional[SaxoData]:
         full_markdown, metadata, images = await convert_pdf_in_thread(pdf_file)
         logfire.debug(f"Metadata: {metadata}")
         
-        # Parse content with OpenAI
+        # Parse content with OpenAI with retry logic for validation errors
         logfire.debug(f"Sending to OpenAI for parsing: {file_name}")
         
-        end_result = await client.responses.parse(
-            model="gpt-4o-mini",
-            instructions=system_prompt,
-            input="This is the Invoice in markdown:\n"
-                    f"\n{full_markdown}\n.\n"
-                    "Convert this into a structured JSON response",
-            text_format=OCRResponse,
-            temperature=0
-        )
-
-        # Get OCR results and convert to SaxoData
-        ocr_data = end_result.output[0].content[0].parsed
-        saxo_data = create_saxo_data_from_ocr(ocr_data)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                end_result = await client.responses.parse(
+                    model="gpt-4o-mini",
+                    instructions=system_prompt,
+                    input="This is the Invoice in markdown:\n"
+                            f"\n{full_markdown}\n.\n"
+                            "Convert this into a structured JSON response",
+                    text_format=OCRResponse,
+                    temperature=0
+                )
+                
+                # Get OCR results and convert to SaxoData
+                ocr_data = end_result.output[0].content[0].parsed
+                saxo_data = create_saxo_data_from_ocr(ocr_data)
+                break  # Success, exit the retry loop
+                
+            except ValidationError as ve:
+                error_str = str(ve)
+                if "Vendor name" in error_str and "is disallowed" in error_str and attempt < max_retries - 1:
+                    # This is a vendor name validation error, retry with clearer instructions
+                    logfire.warning(f"Validation error on attempt {attempt+1}: {error_str}. Retrying...")
+                    # Add more specific instructions for the next attempt
+                    system_prompt_retry = system_prompt + f"\nIMPORTANT: The previous attempt returned a disallowed vendor name. The vendor name CANNOT be any of: Edenred Greece, Voucher Services, Υπηρεσιες Διατακτικων. Look for the actual third-party vendor name in the invoice."
+                    # Use the enhanced prompt in the next attempt
+                    system_prompt = system_prompt_retry
+                    continue
+                else:
+                    # Other validation error or reached max retries
+                    logfire.error(f"Validation error after {attempt+1} attempts: {error_str}")
+                    raise  # Re-raise the exception
         
         processing_time = time.time() - start_time
         logfire.info(f"Successfully processed {file_name} in {processing_time:.2f}s")
