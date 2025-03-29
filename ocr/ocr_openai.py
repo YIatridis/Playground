@@ -17,7 +17,13 @@ import time
 from typing import Optional, List, Dict, Union, Literal
 import re
 import concurrent.futures
+import multiprocessing
 from functools import partial
+
+# Set the multiprocessing start method to 'spawn' for macOS compatibility
+# This prevents issues with forking processes on macOS
+if multiprocessing.get_start_method(allow_none=True) != 'spawn':
+    multiprocessing.set_start_method('spawn', force=True)
 
 load_dotenv()
 
@@ -28,8 +34,8 @@ logfire.instrument_openai(client)
 
 # Fixed concurrency limit
 MAX_CONCURRENCY = 4
-# Thread pool for CPU-bound operations
-thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENCY)
+# Thread pool for CPU-bound operations - will be initialized in main function
+thread_pool = None
 
 def get_gl_date(invoice_date: str) -> str:
     try:
@@ -180,6 +186,7 @@ async def convert_pdf_in_thread(pdf_file: str) -> tuple:
         rendered = converter(pdf_file)
         return text_from_rendered(rendered)
     
+    # Use the global thread_pool 
     return await loop.run_in_executor(thread_pool, _convert_pdf)
 
 async def process_pdf_file(pdf_file: str) -> Optional[SaxoData]:
@@ -364,16 +371,30 @@ def parse_arguments():
     return parser.parse_args()
 
 
-if __name__ == "__main__":
+def main():
+    """Main entry point with proper resource handling."""
+    global thread_pool
+    
     # Parse command-line arguments
     args = parse_arguments()
     
     try:
+        # Initialize thread pool here to ensure proper lifecycle management
+        thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENCY)
+        
         # Run the asyncio event loop
         asyncio.run(process_folder(args.folder, args.output))
     finally:
         # Ensure the thread pool is properly shutdown
-        thread_pool.shutdown(wait=True)
+        if thread_pool:
+            logfire.info("Shutting down thread pool...")
+            thread_pool.shutdown(wait=True)
+            thread_pool = None
+            logfire.info("Thread pool shutdown complete")
+
+
+if __name__ == "__main__":
+    main()
 
 
 
