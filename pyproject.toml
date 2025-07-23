@@ -26,4 +26,5 @@ dependencies = [
     "vision-parse>=0.1.13",
     "yfinance>=0.2.54",
     "psutil>=7.0.0",
+    "pymupdf4llm>=0.0.18",
 ]

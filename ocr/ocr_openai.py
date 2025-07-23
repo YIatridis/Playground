@@ -1,7 +1,7 @@
 from enum import Enum
-from marker.converters.pdf import PdfConverter
-from marker.models import create_model_dict
-from marker.output import text_from_rendered
+# from marker.converters.pdf import PdfConverter
+# from marker.models import create_model_dict
+# from marker.output import text_from_rendered
 from datetime import datetime
 import os  
 import glob 
@@ -19,6 +19,8 @@ import re
 import concurrent.futures
 import multiprocessing
 from functools import partial
+import pymupdf4llm
+
 
 # Set the multiprocessing start method to 'spawn' for macOS compatibility
 # This prevents issues with forking processes on macOS
@@ -164,30 +166,27 @@ def create_saxo_data_from_ocr(ocr_data: OCRResponse) -> SaxoData:
         campaigns_duration=ocr_data.campaigns_duration
     )
 
-system_prompt = """You are a helpful assistant that parses OCR data from images into a structured JSON response.
-vendor_name can never be Edenred or Voucher Services or Υπηρεσιες Διατακτικων. Be extra careful with this.
-Date should always be in the format DD/MM/YYYY.
-"""
 
-async def convert_pdf_in_thread(pdf_file: str) -> tuple:
-    """
-    Run the PdfConverter in a thread pool to avoid blocking the event loop.
+
+# async def convert_pdf_in_thread(pdf_file: str) -> tuple:
+#     """
+#     Run the PdfConverter in a thread pool to avoid blocking the event loop.
     
-    Args:
-        pdf_file (str): Path to the PDF file
+#     Args:
+#         pdf_file (str): Path to the PDF file
         
-    Returns:
-        tuple: (full_markdown, metadata, images)
-    """
-    loop = asyncio.get_event_loop()
+#     Returns:
+#         tuple: (full_markdown, metadata, images)
+#     """
+#     loop = asyncio.get_event_loop()
     
-    def _convert_pdf():
-        converter = PdfConverter(artifact_dict=create_model_dict())
-        rendered = converter(pdf_file)
-        return text_from_rendered(rendered)
+#     def _convert_pdf():
+#         converter = PdfConverter(artifact_dict=create_model_dict())
+#         rendered = converter(pdf_file)
+#         return text_from_rendered(rendered)
     
-    # Use the global thread_pool 
-    return await loop.run_in_executor(thread_pool, _convert_pdf)
+#     # Use the global thread_pool 
+#     return await loop.run_in_executor(thread_pool, _convert_pdf)
 
 async def process_pdf_file(pdf_file: str) -> Optional[SaxoData]:
     """
@@ -213,18 +212,24 @@ async def process_pdf_file(pdf_file: str) -> Optional[SaxoData]:
         
         # Run the PDF conversion in a thread pool to avoid blocking the event loop
         logfire.debug(f"Converting PDF to markdown: {file_name}")
-        full_markdown, metadata, images = await convert_pdf_in_thread(pdf_file)
-        logfire.debug(f"Metadata: {metadata}")
+        #full_markdown, metadata, images = await convert_pdf_in_thread(pdf_file)
+        full_markdown = pymupdf4llm.to_markdown(pdf_file)
+        #logfire.debug(f"Metadata: {metadata}")
         
         # Parse content with OpenAI with retry logic for validation errors
         logfire.debug(f"Sending to OpenAI for parsing: {file_name}")
         
+        system_prompt = """You are a helpful assistant that parses OCR data from images into a structured JSON response.
+        vendor_name can never be Edenred or Voucher Services or Υπηρεσιες Διατακτικων. Be extra careful with this.
+        Date should always be in the format DD/MM/YYYY.
+        """
+
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 end_result = await client.responses.parse(
                     model="gpt-4o-mini",
-                    instructions=system_prompt,
+                    instructions = system_prompt,
                     input="This is the Invoice in markdown:\n"
                             f"\n{full_markdown}\n.\n"
                             "Convert this into a structured JSON response",
@@ -243,7 +248,7 @@ async def process_pdf_file(pdf_file: str) -> Optional[SaxoData]:
                     # This is a vendor name validation error, retry with clearer instructions
                     logfire.warning(f"Validation error on attempt {attempt+1}: {error_str}. Retrying...")
                     # Add more specific instructions for the next attempt
-                    system_prompt_retry = system_prompt + f"\nIMPORTANT: The previous attempt returned a disallowed vendor name. The vendor name CANNOT be any of: Edenred Greece, Voucher Services, Υπηρεσιες Διατακτικων. Look for the actual third-party vendor name in the invoice."
+                    system_prompt_retry = system_prompt + "\nIMPORTANT: The previous attempt returned a disallowed vendor name. The vendor name CANNOT be any of: Edenred Greece, Voucher Services, Υπηρεσιες Διατακτικων. Look for the actual third-party vendor name in the invoice."
                     # Use the enhanced prompt in the next attempt
                     system_prompt = system_prompt_retry
                     continue
